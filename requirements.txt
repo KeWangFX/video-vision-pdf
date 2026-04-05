@@ -1,0 +1,8 @@
+fpdf2>=2.7.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+# 模型提供方 SDK（按需安装你用到的）
+openai>=1.0.0
+google-genai>=1.0.0
+anthropic>=0.40.0

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>视频画面分析 → PDF</title>
+  <style>
+    :root { font-family: "Segoe UI", system-ui, sans-serif; background: #e8e8e8; color: #222; }
+    body { max-width: 960px; margin: 0 auto; padding: 16px 16px 40px; }
+    h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 12px; }
+    .layout-top { background: #f5f5f5; border: 1px solid #ccc; border-radius: 6px; padding: 14px 16px; margin-bottom: 16px; }
+    .row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+    .row-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    button, label.btn { padding: 6px 12px; font-size: 13px; cursor: pointer; border: 1px solid #999; background: #e8e8e8; border-radius: 2px; }
+    button:hover, label.btn:hover { background: #ddd; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .muted { font-size: 13px; color: #444; text-align: right; flex: 1; min-width: 140px; word-break: break-all; }
+    select, input[type="number"], input[type="text"], input[type="password"] { padding: 4px 8px; font-size: 13px; min-width: 80px; }
+    .progress-wrap { margin: 12px 0; height: 22px; background: #ddd; border: 1px solid #bbb; border-radius: 2px; overflow: hidden; }
+    .progress-wrap.indeterminate .bar { width: 35%; animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide { 0%{transform:translateX(-100%)} 100%{transform:translateX(400%)} }
+    .bar { height: 100%; width: 0%; background: linear-gradient(90deg,#6ae,#48a); transition: width .2s ease; }
+    #log { width: 100%; min-height: 120px; box-sizing: border-box; font-family: Consolas,"Courier New",monospace; font-size: 12px; padding: 8px; border: 1px solid #999; background: #fff; resize: vertical; }
+    .start-wrap { text-align: center; margin-top: 12px; }
+    #visionFile { position: absolute; width: 0; height: 0; opacity: 0; }
+    label.btn { display: inline-block; }
+    .hint { font-size: 12px; color: #555; margin: 0 0 8px; }
+    .sep { border: 0; border-top: 1px solid #ccc; margin: 14px 0; }
+    .preview-section { display: none; background: #fff; border: 1px solid #aaa; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .preview-section.visible { display: block; }
+    .preview-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 12px; background: #f0f0f0; border-bottom: 1px solid #ccc; }
+    .preview-toolbar h2 { font-size: .95rem; font-weight: 600; margin: 0; }
+    .preview-toolbar .filename { font-size: 12px; color: #444; max-width: 100%; word-break: break-all; }
+    #pdfPreview { display: block; width: 100%; min-height: 65vh; height: 70vh; border: none; background: #525659; }
+    #pdfPreview.hidden { display: none; }
+    #previewNote { display: none; padding: 20px 16px; font-size: 14px; line-height: 1.5; color: #333; }
+    #previewNote.visible { display: block; }
+  </style>
+</head>
+<body>
+  <h1>视频画面分析 → PDF</h1>
+  <p class="hint">
+    支持 <strong>OpenAI / Google Gemini / Anthropic Claude / Ollama 本地</strong> 等多种视觉模型。
+    镜头模式（推荐）自动检测切换点，每段概括分析。
+  </p>
+
+  <div class="layout-top">
+    <!-- 视频选择 -->
+    <div class="row">
+      <div class="row-left">
+        <label class="btn" for="visionFile">选择视频</label>
+        <input id="visionFile" type="file" accept="video/*,.mp4,.webm,.mov,.mkv" />
+      </div>
+      <span class="muted" id="visionLabel">未选择文件</span>
+    </div>
+
+    <!-- 截帧模式 -->
+    <div class="row">
+      <div class="row-left">
+        <label for="visionMode">截帧方式</label>
+        <select id="visionMode" style="min-width:220px;">
+          <option value="scene" selected>镜头切换（切点检测 + 整段概括）</option>
+          <option value="interval">固定时间间隔（每帧单独分析）</option>
+        </select>
+      </div>
+    </div>
+    <div class="row scene-only">
+      <div class="row-left">
+        <label for="sceneThreshold">切镜灵敏度</label>
+        <input id="sceneThreshold" type="number" min="0.05" max="0.9" step="0.02" value="0.32" style="width:72px;" />
+      </div>
+      <div class="row-left">
+        <label for="mergeGap">合并快切（秒）</label>
+        <input id="mergeGap" type="number" min="0" step="0.02" value="0.12" style="width:72px;" />
+      </div>
+    </div>
+    <div class="row scene-only">
+      <div class="row-left">
+        <label for="maxScenes">镜头数上限</label>
+        <input id="maxScenes" type="number" min="1" step="1" value="48" style="width:72px;" />
+      </div>
+      <div class="row-left">
+        <label for="framesPerClip">每段抽几帧</label>
+        <input id="framesPerClip" type="number" min="1" max="6" step="1" value="3" style="width:72px;" />
+      </div>
+    </div>
+    <div class="row interval-only" style="display:none;">
+      <div class="row-left">
+        <label for="visionInterval">截图间隔（秒）</label>
+        <input id="visionInterval" type="number" min="1" step="1" value="30" style="width:72px;" />
+      </div>
+    </div>
+    <div class="row">
+      <div class="row-left">
+        <label for="visionMaxFrames"><span class="mf-scene">最多镜头段数</span><span class="mf-interval" style="display:none;">最多截帧数</span></label>
+        <input id="visionMaxFrames" type="number" min="0" step="1" value="24" style="width:72px;" />
+      </div>
+    </div>
+
+    <hr class="sep" />
+
+    <!-- 提供方 -->
+    <div class="row">
+      <div class="row-left">
+        <label for="providerSelect">模型提供方</label>
+        <select id="providerSelect" style="min-width:240px;"></select>
+      </div>
+    </div>
+    <!-- API Key -->
+    <div class="row" id="rowApiKey">
+      <div class="row-left">
+        <label for="apiKeyInput">API Key</label>
+        <input id="apiKeyInput" type="password" placeholder="留空则读环境变量" style="width:320px;" />
+        <span class="muted" id="keyHint" style="flex:unset;min-width:unset;"></span>
+      </div>
+    </div>
+    <!-- Base URL -->
+    <div class="row" id="rowApiBase">
+      <div class="row-left">
+        <label for="apiBaseInput">Base URL</label>
+        <input id="apiBaseInput" type="text" value="http://127.0.0.1:11434/v1" style="width:320px;" />
+      </div>
+    </div>
+    <!-- 模型 -->
+    <div class="row">
+      <div class="row-left">
+        <label for="modelSelect">模型名称</label>
+        <select id="modelSelect" style="min-width:200px;"></select>
+        <input id="modelCustom" type="text" placeholder="或手填模型名" style="width:160px;" />
+      </div>
+    </div>
+
+    <div class="start-wrap">
+      <button type="button" id="startBtn">生成画面分析报告</button>
+    </div>
+    <div class="progress-wrap" id="progressWrap"><div class="bar" id="bar"></div></div>
+    <textarea id="log" readonly placeholder="日志…"></textarea>
+  </div>
+
+  <section id="previewSection" class="preview-section">
+    <div class="preview-toolbar">
+      <div><h2>PDF 预览</h2><div class="filename" id="previewFilename"></div></div>
+      <div class="row-left">
+        <button type="button" id="btnDownload">下载</button>
+        <button type="button" id="btnClear">清空</button>
+      </div>
+    </div>
+    <iframe id="pdfPreview" class="hidden" title="PDF 预览"></iframe>
+    <div id="previewNote"></div>
+  </section>
+
+<script>
+const PROVIDERS = {
+  openai:     { name: "OpenAI",           models: ["gpt-4o","gpt-4o-mini","o4-mini"],                       envKey: "OPENAI_API_KEY",    needsKey: true,  needsBase: false },
+  gemini:     { name: "Google Gemini",     models: ["gemini-2.5-flash","gemini-2.5-pro","gemini-2.0-flash"], envKey: "GEMINI_API_KEY",    needsKey: true,  needsBase: false },
+  claude:     { name: "Anthropic Claude",  models: ["claude-sonnet-4-20250514","claude-sonnet-4-20250514"],                   envKey: "ANTHROPIC_API_KEY", needsKey: true,  needsBase: false },
+  ollama:     { name: "Ollama（本地免费）", models: ["qwen3-vl:30b","qwen2.5-vl:7b","llava:latest","minicpm-v:latest","gemma3:4b"], envKey: null, needsKey: false, needsBase: true },
+  compatible: { name: "OpenAI 兼容接口",   models: [],                                                      envKey: null,                needsKey: false, needsBase: true },
+};
+
+const $ = id => document.getElementById(id);
+const log = $("log"), bar = $("bar"), progressWrap = $("progressWrap");
+const previewSection = $("previewSection"), pdfPreview = $("pdfPreview");
+const previewNote = $("previewNote"), previewFilename = $("previewFilename");
+let lastBlob=null, lastFilename="", lastUrl="";
+
+function appendLog(l){ log.value += l+"\n"; log.scrollTop = log.scrollHeight; }
+
+// ---- Provider UI ----
+const provSel = $("providerSelect"), modelSel = $("modelSelect"), modelCustom = $("modelCustom");
+const apiKeyInput = $("apiKeyInput"), apiBaseInput = $("apiBaseInput"), keyHint = $("keyHint");
+const rowApiKey = $("rowApiKey"), rowApiBase = $("rowApiBase");
+
+Object.keys(PROVIDERS).forEach(pid => {
+  const o = document.createElement("option");
+  o.value = pid; o.textContent = pid + " — " + PROVIDERS[pid].name;
+  provSel.appendChild(o);
+});
+provSel.value = "ollama";
+
+function syncProvider() {
+  const p = PROVIDERS[provSel.value] || PROVIDERS.ollama;
+  modelSel.innerHTML = "";
+  p.models.forEach(m => { const o=document.createElement("option"); o.value=m; o.textContent=m; modelSel.appendChild(o); });
+  rowApiKey.style.display = p.needsKey ? "" : "none";
+  rowApiBase.style.display = p.needsBase ? "" : "none";
+  keyHint.textContent = p.envKey ? "(或环境变量 "+p.envKey+")" : "";
+}
+provSel.addEventListener("change", syncProvider);
+syncProvider();
+
+// ---- Mode UI ----
+const visionMode = $("visionMode");
+function syncMode() {
+  const scene = visionMode.value === "scene";
+  document.querySelectorAll(".scene-only").forEach(e => e.style.display = scene?"":"none");
+  document.querySelectorAll(".interval-only").forEach(e => e.style.display = scene?"none":"");
+  document.querySelectorAll(".mf-scene").forEach(e => e.style.display = scene?"":"none");
+  document.querySelectorAll(".mf-interval").forEach(e => e.style.display = scene?"none":"");
+}
+visionMode.addEventListener("change", syncMode); syncMode();
+
+// ---- File label ----
+const visionFile = $("visionFile"), visionLabel = $("visionLabel");
+visionFile.addEventListener("change", () => {
+  const f = visionFile.files && visionFile.files[0];
+  visionLabel.textContent = f ? f.name : "未选择文件";
+});
+
+// ---- Preview ----
+function revokeUrl(){ if(lastUrl){URL.revokeObjectURL(lastUrl);lastUrl="";} pdfPreview.src="about:blank"; }
+function showPreview(blob,name){
+  lastBlob=blob; lastFilename=name||"download.pdf"; revokeUrl();
+  lastUrl=URL.createObjectURL(blob); previewNote.classList.remove("visible"); previewNote.textContent="";
+  pdfPreview.classList.remove("hidden"); pdfPreview.src=lastUrl;
+  previewFilename.textContent=lastFilename; previewSection.classList.add("visible");
+}
+function triggerDl(blob,name){ const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),3000); }
+
+$("btnDownload").addEventListener("click",()=>{ if(lastBlob) triggerDl(lastBlob,lastFilename); else appendLog("无可下载 PDF。"); });
+$("btnClear").addEventListener("click",()=>{ revokeUrl();lastBlob=null;lastFilename="";previewSection.classList.remove("visible");previewNote.classList.remove("visible");previewFilename.textContent="";pdfPreview.classList.add("hidden"); });
+
+// ---- Submit ----
+$("startBtn").addEventListener("click", async()=>{
+  const f = visionFile.files && visionFile.files[0];
+  if(!f){ appendLog("请选择一个视频文件。"); return; }
+
+  const model = (modelCustom.value||"").trim() || modelSel.value || "qwen3-vl:30b";
+  const fd = new FormData();
+  fd.append("file", f, f.name);
+  fd.append("mode", visionMode.value||"scene");
+  fd.append("interval", String(parseFloat($("visionInterval").value)||30));
+  fd.append("max_frames", String(parseInt($("visionMaxFrames").value,10)||24));
+  fd.append("scene_threshold", String(parseFloat($("sceneThreshold").value)||0.32));
+  fd.append("merge_gap_sec", String(parseFloat($("mergeGap").value)||0));
+  fd.append("max_scenes", String(parseInt($("maxScenes").value,10)||48));
+  fd.append("frames_per_clip", String(parseInt($("framesPerClip").value,10)||3));
+  fd.append("provider", provSel.value);
+  fd.append("model", model);
+  const ak = (apiKeyInput.value||"").trim(); if(ak) fd.append("api_key", ak);
+  const ab = (apiBaseInput.value||"").trim(); if(ab) fd.append("api_base", ab);
+
+  $("startBtn").disabled = true; bar.style.width="0%"; progressWrap.classList.add("indeterminate");
+  appendLog("上传并分析中… ("+provSel.value+" / "+model+")");
+
+  try {
+    const res = await fetch("/api/video-vision",{method:"POST",body:fd});
+    if(!res.ok){
+      const raw = await res.text(); let msg="";
+      try{ const j=JSON.parse(raw); msg=j.detail||raw.slice(0,400); }catch(_){ msg=raw.slice(0,300); }
+      appendLog("Error "+res.status+": "+msg); return;
+    }
+    const blob = await res.blob();
+    const base = (f.name||"video").replace(/\.[^.]+$/,"");
+    const name = base+".pdf";
+    triggerDl(blob,name); showPreview(blob,name);
+    appendLog("完成: "+name);
+  }catch(e){ appendLog("Error: "+e); }
+  finally{ progressWrap.classList.remove("indeterminate"); bar.style.width="100%"; $("startBtn").disabled=false; }
+});
+</script>
+</body>
+</html>
