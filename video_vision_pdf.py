@@ -244,26 +244,38 @@ def _setup_font(pdf: FPDF) -> str:
     return "Helvetica"
 
 
+def _reset_x(pdf: FPDF) -> None:
+    """确保光标在左边距，避免图片/表格后 X 偏移导致写入崩溃。"""
+    pdf.set_x(pdf.l_margin)
+
+
+def _safe_mc(pdf: FPDF, w: float, lh: float, text: str) -> None:
+    """单行 multi_cell 写入，任何异常都不中断。"""
+    _reset_x(pdf)
+    try:
+        pdf.multi_cell(w, lh, text)
+    except Exception:
+        try:
+            pdf.multi_cell(w, lh, text[:60] + "…")
+        except Exception:
+            pass
+
+
 def _safe_write(pdf: FPDF, fn: str, text: str, size: int = 11, lh: float = 6) -> None:
-    """安全写入文本，自动处理超长行避免 fpdf2 崩溃。"""
+    """安全写入多行文本，自动重置光标、处理超长行。"""
     pdf.set_font(fn, size=size)
-    max_w = pdf.epw
     for line in text.split("\n"):
         line = line.strip()
         if not line:
             continue
+        _reset_x(pdf)
         try:
-            pdf.multi_cell(max_w, lh, line)
+            pdf.multi_cell(0, lh, line)
         except Exception:
-            # 超长无空格串强制按字符截断
             while line:
-                chunk = line[:80]
-                line = line[80:]
-                try:
-                    pdf.multi_cell(max_w, lh, chunk)
-                except Exception:
-                    pdf.multi_cell(max_w, lh, chunk[:40] + "…")
-                    break
+                chunk = line[:60]
+                line = line[60:]
+                _safe_mc(pdf, 0, lh, chunk)
 
 
 def build_pdf(
@@ -282,44 +294,52 @@ def build_pdf(
     fn = _setup_font(pdf)
 
     pdf.add_page()
+
+    _reset_x(pdf)
     pdf.set_font(fn, size=16)
     pdf.multi_cell(0, 10, "视频画面分析报告")
     pdf.ln(2)
+
+    _reset_x(pdf)
     pdf.set_font(fn, size=10)
     pdf.multi_cell(0, 5, f"源文件: {video_name}")
     if provider_info:
+        _reset_x(pdf)
         pdf.multi_cell(0, 5, f"分析模型: {provider_info}")
     pdf.ln(4)
 
     if summary:
+        _reset_x(pdf)
         pdf.set_font(fn, size=14)
         pdf.multi_cell(0, 8, "一、视频主要讲什么（综合归纳）")
         pdf.ln(1)
         _safe_write(pdf, fn, summary, size=11, lh=6)
         pdf.ln(4)
 
+    _reset_x(pdf)
     pdf.set_font(fn, size=14)
     pdf.multi_cell(0, 8, f"二、{section_subtitle}")
     pdf.ln(2)
 
     for idx, (t0, t1, img_path, analysis) in enumerate(items, start=1):
         pdf.add_page()
+        _reset_x(pdf)
         pdf.set_font(fn, size=12)
         pdf.multi_cell(0, 7, f"{_rlabel(t0, t1)}（第 {idx} 段）")
         pdf.ln(2)
+        _reset_x(pdf)
         try:
             pdf.image(str(img_path), w=min(180, pdf.epw))
         except Exception as e:
             font_log.append(f"插图失败 {img_path.name}: {e}")
-            pdf.set_font(fn, size=11)
-            pdf.multi_cell(0, 6, f"[无法嵌入图片: {e}]")
         pdf.ln(3)
+        _reset_x(pdf)
         if analysis:
             _safe_write(pdf, fn, analysis, size=11, lh=6)
             pdf.ln(2)
         else:
             pdf.set_font(fn, size=11)
-            pdf.multi_cell(0, 6, "（未启用 AI 分析）")
+            _safe_mc(pdf, 0, 6, "（未启用 AI 分析）")
 
     pdf.output(str(out_pdf))
 
