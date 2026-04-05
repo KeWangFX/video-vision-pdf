@@ -244,6 +244,28 @@ def _setup_font(pdf: FPDF) -> str:
     return "Helvetica"
 
 
+def _safe_write(pdf: FPDF, fn: str, text: str, size: int = 11, lh: float = 6) -> None:
+    """安全写入文本，自动处理超长行避免 fpdf2 崩溃。"""
+    pdf.set_font(fn, size=size)
+    max_w = pdf.epw
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pdf.multi_cell(max_w, lh, line)
+        except Exception:
+            # 超长无空格串强制按字符截断
+            while line:
+                chunk = line[:80]
+                line = line[80:]
+                try:
+                    pdf.multi_cell(max_w, lh, chunk)
+                except Exception:
+                    pdf.multi_cell(max_w, lh, chunk[:40] + "…")
+                    break
+
+
 def build_pdf(
     out_pdf: Path,
     video_name: str,
@@ -255,7 +277,8 @@ def build_pdf(
     provider_info: str = "",
 ) -> None:
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.set_margins(10, 10, 10)
     fn = _setup_font(pdf)
 
     pdf.add_page()
@@ -272,11 +295,7 @@ def build_pdf(
         pdf.set_font(fn, size=14)
         pdf.multi_cell(0, 8, "一、视频主要讲什么（综合归纳）")
         pdf.ln(1)
-        pdf.set_font(fn, size=11)
-        for para in summary.split("\n"):
-            if para.strip():
-                pdf.multi_cell(0, 6, para.strip())
-                pdf.ln(1)
+        _safe_write(pdf, fn, summary, size=11, lh=6)
         pdf.ln(4)
 
     pdf.set_font(fn, size=14)
@@ -295,13 +314,11 @@ def build_pdf(
             pdf.set_font(fn, size=11)
             pdf.multi_cell(0, 6, f"[无法嵌入图片: {e}]")
         pdf.ln(3)
-        pdf.set_font(fn, size=11)
         if analysis:
-            for line in analysis.split("\n"):
-                if line.strip():
-                    pdf.multi_cell(0, 6, line.strip())
+            _safe_write(pdf, fn, analysis, size=11, lh=6)
             pdf.ln(2)
         else:
+            pdf.set_font(fn, size=11)
             pdf.multi_cell(0, 6, "（未启用 AI 分析）")
 
     pdf.output(str(out_pdf))
